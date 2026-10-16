@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ton audit – Fantômes</title>
+<meta name="robots" content="noindex,nofollow">
+<style>
+:root{--encre:#12261f;--corail:#ff5a36;--creme:#faf6ee;--gris:#5c6661;--trait:#e3dccd}
+*{box-sizing:border-box}
+body{margin:0;background:var(--creme);color:var(--encre);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:17px;line-height:1.5}
+main{max-width:560px;margin:0 auto;padding:28px 20px 60px}
+.marque{font-family:Georgia,serif;font-weight:700;font-size:20px}
+h1{font-family:Georgia,serif;font-size:32px;line-height:1.15;margin:22px 0 12px}
+h1 span{color:var(--corail)}
+.note{color:var(--gris);font-size:15px}
+.btn{display:block;width:100%;min-height:52px;background:var(--corail);color:#fff;border:0;border-radius:14px;font-size:18px;font-weight:700;padding:14px;text-align:center;cursor:pointer}
+.btn.sec{background:#fff;color:var(--encre);border:2px solid var(--encre);font-size:16px;min-height:46px;margin-top:10px}
+input[type=file]{display:none}
+details{margin:14px 0;color:var(--gris);font-size:15px}
+summary{cursor:pointer;padding:6px 0}
+.total{background:var(--encre);color:var(--creme);border-radius:14px;padding:18px;margin:22px 0;position:sticky;top:8px}
+.total strong{display:block;color:var(--corail);font-family:Georgia,serif;font-size:32px}
+.card{background:#fff;border:1px solid var(--trait);border-radius:14px;padding:16px;margin:12px 0}
+.card h3{margin:0;font-size:18px;word-break:break-word}
+.card small{display:block;color:var(--gris);word-break:break-word}
+.an{font-family:Georgia,serif;font-size:26px;color:var(--corail);font-weight:700;margin-top:6px}
+label.ck{display:flex;gap:10px;align-items:center;margin-top:8px;min-height:44px;font-weight:600}
+label.ck input{width:24px;height:24px}
+textarea{width:100%;min-height:320px;font:15px/1.5 system-ui;padding:12px;border:1px solid var(--trait);border-radius:10px;margin-top:10px}
+.id input{width:100%;padding:12px;margin:6px 0;border:1px solid var(--trait);border-radius:10px;font-size:16px}
+.erreur{background:#fff;border-left:5px solid var(--corail);padding:14px;border-radius:10px;margin:16px 0}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<div class="marque">Fantômes</div>
+<h1>Dépose ton relevé. On débusque <span>les fantômes.</span></h1>
+<p class="note"><strong>Ton relevé reste sur ton téléphone.</strong> Il est lu ici, dans ton navigateur, et n'est envoyé nulle part.</p>
+<label class="btn" for="f">Choisir mon relevé (CSV)</label>
+<input id="f" type="file" accept=".csv,.txt,text/csv">
+<details><summary>Comment obtenir ce fichier ?</summary>
+<p>Sur le site ou l'appli de ta banque, cherche « Exporter » ou « Télécharger » tes opérations, et choisis le format <b>CSV</b> (ou Excel, puis enregistre en CSV). Prends les 6 à 12 derniers mois : plus c'est long, plus la détection est fiable. Le PDF n'est pas pris en charge.</p></details>
+<div id="err" class="erreur" hidden></div>
+<section id="res" hidden>
+<div class="total">Tu peux économiser<strong id="tot">0 €</strong>par an, en résiliant ce que tu coches.</div>
+<p class="note" id="info"></p>
+<div class="id"><b>Pour tes lettres</b>
+<input id="nom" placeholder="Ton nom et prénom" autocomplete="name">
+<input id="adr" placeholder="Ton adresse" autocomplete="street-address"></div>
+<div id="liste"></div>
+</section>
+</main>
+<script>
+(function(){
+const $=id=>document.getElementById(id);
+const eur=n=>new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR'}).format(n);
+const norm=s=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+const H={date:/date/,label:/libelle|label|operation|detail|description|intitule|objet|nature/,debit:/debit/,credit:/credit/,amount:/montant|amount|somme/};
+const STOP=/\b(prlv|prelevement|prelev|sepa|cb|carte|paiement|pmt|ech|echeance|vir|virement|facture|fact|ref|mandat|achat|retrait)\b/g;
+const key=l=>norm(l).replace(STOP,' ').replace(/[^a-z ]/g,' ').split(/\s+/).filter(w=>w.length>2).slice(0,2).join(' ');
+const tc=s=>s.replace(/\b\w/g,c=>c.toUpperCase());
+const fail=m=>{$('err').textContent=m;$('err').hidden=false};
+
+function split(line,d){const o=[];let c='',q=false;for(let i=0;i<line.length;i++){const x=line[i];if(x==='"'){if(q&&line[i+1]==='"'){c+='"';i++}else q=!q}else if(x===d&&!q){o.push(c);c=''}else c+=x}o.push(c);return o.map(s=>s.trim())}
+function pd(s){s=s||'';let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);if(m)return{y:+m[1],m:+m[2]};m=s.match(/(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/);if(m){let y=+m[3];if(y<100)y+=2000;return{y,m:+m[2]}}return null}
+function num(s){if(!s)return null;s=s.replace(/\u2212/g,'-').replace(/[\s\u00a0€]|eur/gi,'');if(!s)return null;const c=s.lastIndexOf(','),p=s.lastIndexOf('.');if(c>-1&&p>-1)s=c>p?s.replace(/\./g,'').replace(',','.'):s.replace(/,/g,'');else s=s.replace(',','.');const n=parseFloat(s);return isNaN(n)?null:n}
+
+function parse(text){
+ const lines=text.split(/\r?\n/).filter(l=>l.trim());
+ const sample=lines.slice(0,15).join('\n');
+ const d=[';','\t',','].map(c=>[c,sample.split(c).length]).sort((a,b)=>b[1]-a[1])[0][0];
+ const rows=lines.map(l=>split(l,d));
+ let h=-1,I={};
+ for(let i=0;i<Math.min(rows.length,40);i++){
+  const c=rows[i].map(norm);
+  const di=c.findIndex(x=>H.date.test(x)); if(di<0)continue;
+  const li=c.findIndex((x,j)=>j!==di&&H.label.test(x)); if(li<0)continue;
+  const ai=c.findIndex(x=>H.amount.test(x)),db=c.findIndex(x=>H.debit.test(x)),cr=c.findIndex(x=>H.credit.test(x));
+  if(ai<0&&db<0)continue;
+  h=i;I={di,li,ai,db,cr};break;
+ }
+ if(h<0)throw new Error('cols');
+ const out=[];
+ for(let i=h+1;i<rows.length;i++){
+  const r=rows[i],dt=pd(r[I.di]);if(!dt)continue;
+  let a=null;
+  if(I.ai>-1)a=num(r[I.ai]);
+  else{const x=num(r[I.db]),y=I.cr>-1?num(r[I.cr]):null;if(x)a=-Math.abs(x);else if(y)a=Math.abs(y)}
+  if(a==null||a>=0)continue;
+  out.push({l:(r[I.li]||'').trim(),a,mi:dt.y*12+dt.m});
+ }
+ return out;
+}
+function detect(rows){
+ const g={};
+ rows.forEach(t=>{const k=key(t.l);if(k)(g[k]=g[k]||[]).push(t)});
+ const subs=[];
+ for(const k in g){
+  const a=g[k],ms=new Set(a.map(t=>t.mi));
+  if(ms.size<2||a.length!==ms.size)continue;
+  const v=a.map(t=>-t.a).sort((x,y)=>x-y);
+  if(v[v.length-1]/v[0]>1.15)continue;
+  const med=v[Math.floor(v.length/2)];
+  subs.push({k,raw:a[0].l,n:ms.size,m:med,y:med*12});
+ }
+ return subs.sort((a,b)=>b.y-a.y);
+}
+const lettre=s=>{const n=$('nom').value||'[Ton nom et prénom]';return `${n}
+${$('adr').value||'[Ton adresse]'}
+
+${tc(s.k)}
+Service des résiliations
+
+Le ${new Date().toLocaleDateString('fr-FR')}
+
+Objet : résiliation de mon abonnement
+Référence client : [à compléter]
+
+Madame, Monsieur,
+
+Je vous informe par la présente que je souhaite résilier l'abonnement que j'ai souscrit auprès de vos services, facturé environ ${eur(s.m)} par mois, avec effet à la première date possible.
+
+Je vous remercie de bien vouloir :
+- me confirmer par écrit la prise en compte de cette résiliation et sa date d'effet ;
+- cesser tout prélèvement à compter de cette date.
+
+À défaut de réponse, je me réserve le droit de demander à ma banque de bloquer ces prélèvements.
+
+Veuillez agréer, Madame, Monsieur, mes salutations distinguées.
+
+${n}`};
+
+function show(subs){
+ const L=$('liste');L.textContent='';
+ const chk=[];
+ const upd=()=>{$('tot').textContent=eur(subs.reduce((t,s,i)=>t+(chk[i].checked?s.y:0),0))};
+ $('info').textContent=subs.length+' prélèvement(s) régulier(s) repéré(s), soit '+eur(subs.reduce((t,s)=>t+s.y,0))+' par an au total. Coche ceux que tu veux résilier.';
+ subs.forEach((s,i)=>{
+  const c=document.createElement('div');c.className='card';
+  const h=document.createElement('h3');h.textContent=tc(s.k);
+  const sm=document.createElement('small');sm.textContent=s.raw.slice(0,60)+' · '+eur(s.m)+' par mois · vu sur '+s.n+' mois';
+  const an=document.createElement('div');an.className='an';an.textContent=eur(s.y)+' / an';
+  const lb=document.createElement('label');lb.className='ck';
+  const cb=document.createElement('input');cb.type='checkbox';cb.onchange=upd;chk.push(cb);
+  lb.append(cb,document.createTextNode('Je résilie'));
+  const b=document.createElement('button');b.className='btn sec';b.textContent='Lettre de résiliation';
+  const box=document.createElement('div');box.hidden=true;
+  const ta=document.createElement('textarea');
+  const cp=document.createElement('button');cp.className='btn sec';cp.textContent='Copier la lettre';
+  b.onclick=()=>{if(box.hidden){ta.value=lettre(s);box.hidden=false}else box.hidden=true};
+  cp.onclick=async()=>{try{await navigator.clipboard.writeText(ta.value)}catch(e){ta.select();document.execCommand('copy')}cp.textContent='Copiée'};
+  box.append(ta,cp);
+  c.append(h,sm,an,lb,b,box);L.append(c);
+ });
+ upd();$('res').hidden=false;
+}
+function go(text){
+ $('err').hidden=true;$('res').hidden=true;
+ let subs;
+ try{subs=detect(parse(text))}catch(e){return fail(e.message==='cols'?"Je n'ai pas reconnu les colonnes de ton fichier. Il faut au minimum une colonne Date, une colonne Libellé et une colonne Montant (ou Débit / Crédit).":"Ce fichier n'a pas pu être lu. Vérifie qu'il s'agit bien d'un export CSV.")}
+ if(!subs.length)return fail("Aucun prélèvement régulier détecté. Vérifie que ton fichier couvre plusieurs mois (idéalement 6 à 12).");
+ show(subs);
+}
+$('f').addEventListener('change',e=>{
+ const f=e.target.files[0];if(!f)return;
+ const r=new FileReader();
+ r.onload=()=>{let t;try{t=new TextDecoder('utf-8',{fatal:true}).decode(r.result)}catch(_){t=new TextDecoder('windows-1252').decode(r.result)}go(t)};
+ r.readAsArrayBuffer(f);
+});
+})();
+</script>
+</body>
+</html>
